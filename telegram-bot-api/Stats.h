@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -9,7 +9,6 @@
 #include "td/actor/actor.h"
 
 #include "td/utils/common.h"
-#include "td/utils/logging.h"
 #include "td/utils/port/Stat.h"
 #include "td/utils/Time.h"
 #include "td/utils/TimedStat.h"
@@ -49,16 +48,10 @@ class ServerCpuStat {
     static ServerCpuStat stat;
     return stat;
   }
-  static void update(double now) {
-    auto r_event = td::cpu_stat();
-    if (r_event.is_error()) {
-      return;
-    }
-    instance().add_event(r_event.ok(), now);
-    LOG(WARNING) << "CPU usage: " << instance().stat_[1].get_stat(now).as_vector()[0].value_;
-  }
 
-  td::string get_description() const;
+  static void update(double now);
+
+  static td::string get_description();
 
   td::vector<StatItem> as_vector(double now);
 
@@ -71,8 +64,6 @@ class ServerCpuStat {
   td::TimedStat<CpuStat> stat_[SIZE];
 
   ServerCpuStat();
-
-  void add_event(const td::CpuStat &stat, double now);
 };
 
 class ServerBotInfo {
@@ -115,15 +106,17 @@ struct ServerBotStat {
   struct Response {
     bool ok_;
     size_t size_;
+    td::int64 file_count_;
+    td::int64 files_size_;
   };
-  void on_event(const Response &answer) {
+  void on_event(const Response &response) {
     response_count_++;
-    if (answer.ok_) {
+    if (response.ok_) {
       response_count_ok_++;
     } else {
       response_count_error_++;
     }
-    response_bytes_ += static_cast<double>(answer.size_);
+    response_bytes_ += static_cast<double>(response.size_);
   }
 
   struct Request {
@@ -154,7 +147,7 @@ class BotStatActor final : public td::Actor {
   }
 
   BotStatActor(const BotStatActor &) = delete;
-  BotStatActor &operator=(const BotStatActor &other) = delete;
+  BotStatActor &operator=(const BotStatActor &) = delete;
   BotStatActor(BotStatActor &&) = default;
   BotStatActor &operator=(BotStatActor &&other) noexcept {
     if (!empty()) {
@@ -173,13 +166,25 @@ class BotStatActor final : public td::Actor {
     for (auto &stat : stat_) {
       stat.add_event(event, now);
     }
+    on_event(event);
     if (!parent_.empty()) {
       send_closure(parent_, &BotStatActor::add_event<EventT>, event, now);
     }
   }
 
   td::vector<StatItem> as_vector(double now);
-  td::string get_description() const;
+
+  static td::string get_description();
+
+  double get_score(double now);
+
+  double get_minute_update_count(double now);
+
+  td::int64 get_active_request_count() const;
+
+  td::int64 get_active_file_upload_bytes() const;
+
+  td::int64 get_active_file_upload_count() const;
 
   bool is_active(double now) const;
 
@@ -191,6 +196,26 @@ class BotStatActor final : public td::Actor {
   td::TimedStat<ServerBotStat> stat_[SIZE];
   td::ActorId<BotStatActor> parent_;
   double last_activity_timestamp_ = -1e9;
+  td::int64 active_request_count_ = 0;
+  td::int64 active_file_upload_bytes_ = 0;
+  td::int64 active_file_upload_count_ = 0;
+
+  void on_event(const ServerBotStat::Update &update) {
+  }
+
+  void on_event(const ServerBotStat::Response &response) {
+    active_request_count_--;
+    active_file_upload_count_ -= response.file_count_;
+    active_file_upload_bytes_ -= response.files_size_;
+    CHECK(active_request_count_ >= 0);
+    CHECK(active_file_upload_bytes_ >= 0);
+  }
+
+  void on_event(const ServerBotStat::Request &request) {
+    active_request_count_++;
+    active_file_upload_count_ += request.file_count_;
+    active_file_upload_bytes_ += request.files_size_;
+  }
 };
 
 }  // namespace telegram_bot_api

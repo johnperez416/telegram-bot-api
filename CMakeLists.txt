@@ -6,7 +6,7 @@ if (POLICY CMP0065)
   cmake_policy(SET CMP0065 NEW)
 endif()
 
-project(TelegramBotApi VERSION 6.2 LANGUAGES CXX)
+project(TelegramBotApi VERSION 8.2 LANGUAGES CXX)
 
 if (POLICY CMP0069)
   option(TELEGRAM_BOT_API_ENABLE_LTO "Use \"ON\" to enable Link Time Optimization.")
@@ -73,6 +73,9 @@ if (CLANG OR GCC)
     elseif (APPLE)
       set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-no_pie")
     endif()
+    include(AddCXXCompilerFlag)
+    add_cxx_compiler_flag("-static-libstdc++")
+    add_cxx_compiler_flag("-static-libgcc")
   endif()
 endif()
 
@@ -85,6 +88,7 @@ set(TELEGRAM_BOT_API_SOURCE
   telegram-bot-api/HttpStatConnection.cpp
   telegram-bot-api/Query.cpp
   telegram-bot-api/Stats.cpp
+  telegram-bot-api/Watchdog.cpp
   telegram-bot-api/WebhookActor.cpp
 
   telegram-bot-api/Client.h
@@ -95,6 +99,7 @@ set(TELEGRAM_BOT_API_SOURCE
   telegram-bot-api/HttpStatConnection.h
   telegram-bot-api/Query.h
   telegram-bot-api/Stats.h
+  telegram-bot-api/Watchdog.h
   telegram-bot-api/WebhookActor.h
 )
 

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -29,10 +29,10 @@ namespace telegram_bot_api {
 
 struct SharedData {
   std::atomic<td::uint64> query_count_{0};
+  std::atomic<size_t> query_list_size_{0};
   std::atomic<int> next_verbosity_level_{-1};
 
-  // not thread-safe
-  size_t query_list_size_ = 0;
+  // not thread-safe, must be used from a single thread
   td::ListNode query_list_;
   td::unique_ptr<td::KeyValueSyncInterface> webhook_db_;
   td::unique_ptr<td::TQueue> tqueue_;
@@ -51,6 +51,55 @@ struct SharedData {
       return std::numeric_limits<td::int32>::max();
     }
     return static_cast<td::int32>(result);
+  }
+
+  static td::int32 get_file_gc_scheduler_id() {
+    // the same scheduler as for file GC in Td
+    return 2;
+  }
+
+  static td::int32 get_client_scheduler_id() {
+    // the thread for ClientManager and all Clients
+    return 4;
+  }
+
+  static td::int32 get_watchdog_scheduler_id() {
+    // the thread for watchdogs
+    return 5;
+  }
+
+  static td::int32 get_slow_incoming_http_scheduler_id() {
+    // the thread for slow incoming HTTP connections
+    return 6;
+  }
+
+  static td::int32 get_slow_outgoing_http_scheduler_id() {
+    // the thread for slow outgoing HTTP connections
+    return 7;
+  }
+
+  static td::int32 get_dns_resolver_scheduler_id() {
+    // the thread for DNS resolving
+    return 8;
+  }
+
+  static td::int32 get_binlog_scheduler_id() {
+    // the thread for TQueue and webhook binlogs
+    return 9;
+  }
+
+  static td::int32 get_webhook_certificate_scheduler_id() {
+    // the thread for webhook certificate processing
+    return 10;
+  }
+
+  static td::int32 get_statistics_thread_id() {
+    // the thread for CPU usage updating
+    return 11;
+  }
+
+  static td::int32 get_thread_count() {
+    return 12;
   }
 };
 

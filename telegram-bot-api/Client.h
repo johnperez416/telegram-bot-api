@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -22,12 +22,13 @@
 #include "td/utils/Container.h"
 #include "td/utils/FlatHashMap.h"
 #include "td/utils/FlatHashSet.h"
+#include "td/utils/HashTableUtils.h"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/Promise.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
+#include "td/utils/WaitFreeHashMap.h"
 
-#include <functional>
 #include <limits>
 #include <memory>
 #include <queue>
@@ -59,48 +60,54 @@ class Client final : public WebhookActor::Callback {
   using int32 = td::int32;
   using int64 = td::int64;
 
-  using Slice = td::Slice;
-  using Status = td::Status;
-
   template <class T>
   using object_ptr = td_api::object_ptr<T>;
 
   static constexpr bool USE_MESSAGE_DATABASE = false;
 
+  static constexpr int64 GENERAL_MESSAGE_THREAD_ID = 1 << 20;
+
   static constexpr int32 MAX_CERTIFICATE_FILE_SIZE = 3 << 20;
   static constexpr int32 MAX_DOWNLOAD_FILE_SIZE = 20 << 20;
 
-  static constexpr int32 MAX_CONCURRENTLY_SENT_CHAT_MESSAGES = 1000;  // some unreasonably big value
+  static constexpr int32 MAX_CONCURRENTLY_SENT_CHAT_MESSAGES = 310;  // some unreasonably big value
 
   static constexpr std::size_t MIN_PENDING_UPDATES_WARNING = 200;
 
   static constexpr int64 GREAT_MINDS_SET_ID = 1842540969984001;
-  static constexpr Slice GREAT_MINDS_SET_NAME = "TelegramGreatMinds";
+  static constexpr td::Slice GREAT_MINDS_SET_NAME = "TelegramGreatMinds";
 
   static constexpr int32 MASK_POINTS_SIZE = 4;
-  static constexpr Slice MASK_POINTS[MASK_POINTS_SIZE] = {"forehead", "eyes", "mouth", "chin"};
+  static constexpr td::Slice MASK_POINTS[MASK_POINTS_SIZE] = {"forehead", "eyes", "mouth", "chin"};
 
   static constexpr int32 MAX_LENGTH = 10000;  // max width or height
   static constexpr int32 MAX_DURATION = 24 * 60 * 60;
 
-  static constexpr int LOGGING_OUT_ERROR_CODE = 401;
-  static constexpr Slice LOGGING_OUT_ERROR_DESCRIPTION = "Unauthorized";
-  static constexpr Slice API_ID_INVALID_ERROR_DESCRIPTION = "Unauthorized: invalid api-id/api-hash";
+  static constexpr std::size_t MAX_STICKER_EMOJI_COUNT = 20;
 
-  static constexpr int CLOSING_ERROR_CODE = 500;
-  static constexpr Slice CLOSING_ERROR_DESCRIPTION = "Internal Server Error: restart";
-
+  class JsonEmptyObject;
   class JsonFile;
   class JsonDatedFile;
   class JsonDatedFiles;
   class JsonUser;
   class JsonUsers;
+  class JsonReactionType;
+  class JsonReactionCount;
+  class JsonBirthdate;
+  class JsonBusinessStartPage;
+  class JsonBusinessLocation;
+  class JsonBusinessOpeningHoursInterval;
+  class JsonBusinessOpeningHours;
   class JsonChatPermissions;
   class JsonChatPhotoInfo;
   class JsonChatLocation;
   class JsonChatInviteLink;
   class JsonChat;
   class JsonMessageSender;
+  class JsonMessageOrigin;
+  class JsonExternalReplyInfo;
+  class JsonTextQuote;
+  class JsonLinkPreviewOptions;
   class JsonAnimation;
   class JsonAudio;
   class JsonDocument;
@@ -114,6 +121,8 @@ class Client final : public WebhookActor::Callback {
   class JsonVideo;
   class JsonVideoNote;
   class JsonVoiceNote;
+  class JsonPaidMedia;
+  class JsonPaidMediaInfo;
   class JsonContact;
   class JsonDice;
   class JsonGame;
@@ -125,14 +134,14 @@ class Client final : public WebhookActor::Callback {
   class JsonPollAnswer;
   class JsonEntity;
   class JsonVectorEntities;
-  class JsonCallbackGame;
   class JsonWebAppInfo;
+  class JsonCopyTextButton;
   class JsonInlineKeyboardButton;
   class JsonInlineKeyboard;
   class JsonReplyMarkup;
   class JsonMessage;
   class JsonMessages;
-  class JsonDeletedMessage;
+  class JsonInaccessibleMessage;
   class JsonMessageId;
   class JsonInlineQuery;
   class JsonChosenInlineResult;
@@ -140,32 +149,70 @@ class Client final : public WebhookActor::Callback {
   class JsonInlineCallbackQuery;
   class JsonShippingQuery;
   class JsonPreCheckoutQuery;
+  class JsonPaidMediaPurchased;
   class JsonBotCommand;
   class JsonBotMenuButton;
+  class JsonBotName;
+  class JsonBotInfoDescription;
+  class JsonBotInfoShortDescription;
   class JsonChatAdministratorRights;
   class JsonChatPhotos;
   class JsonChatMember;
   class JsonChatMembers;
   class JsonChatMemberUpdated;
   class JsonChatJoinRequest;
+  class JsonChatBoostSource;
+  class JsonChatBoost;
+  class JsonChatBoostUpdated;
+  class JsonChatBoostRemoved;
+  class JsonChatBoosts;
+  class JsonForumTopicCreated;
+  class JsonForumTopicEdited;
+  class JsonForumTopicInfo;
   class JsonGameHighScore;
+  class JsonGift;
+  class JsonGifts;
+  class JsonMessageReactionUpdated;
+  class JsonMessageReactionCountUpdated;
+  class JsonBusinessConnection;
+  class JsonBusinessMessagesDeleted;
   class JsonAddress;
   class JsonOrderInfo;
+  class JsonStory;
+  class JsonBackgroundFill;
+  class JsonBackgroundType;
+  class JsonChatBackground;
   class JsonSuccessfulPaymentBot;
+  class JsonRefundedPayment;
   class JsonEncryptedPassportElement;
   class JsonEncryptedCredentials;
   class JsonPassportData;
   class JsonWebAppData;
   class JsonProximityAlertTriggered;
   class JsonVideoChatScheduled;
-  class JsonVideoChatStarted;
   class JsonVideoChatEnded;
   class JsonInviteVideoChatParticipants;
-  class JsonChatSetTtl;
+  class JsonChatSetMessageAutoDeleteTime;
+  class JsonWriteAccessAllowed;
+  class JsonUserShared;
+  class JsonSharedUser;
+  class JsonUsersShared;
+  class JsonChatShared;
+  class JsonGiveawayCreated;
+  class JsonGiveaway;
+  class JsonGiveawayWinners;
+  class JsonGiveawayCompleted;
+  class JsonChatBoostAdded;
+  class JsonRevenueWithdrawalState;
+  class JsonAffiliateInfo;
+  class JsonStarTransactionType;
+  class JsonStarTransaction;
+  class JsonStarTransactions;
   class JsonUpdateTypes;
   class JsonWebhookInfo;
   class JsonStickerSet;
   class JsonSentWebAppMessage;
+  class JsonPreparedInlineMessageId;
   class JsonCustomJson;
 
   class TdOnOkCallback;
@@ -173,31 +220,45 @@ class Client final : public WebhookActor::Callback {
   class TdOnInitCallback;
   class TdOnGetUserProfilePhotosCallback;
   class TdOnSendMessageCallback;
+  class TdOnReturnBusinessMessageCallback;
   class TdOnSendMessageAlbumCallback;
+  class TdOnSendBusinessMessageAlbumCallback;
+  class TdOnForwardMessagesCallback;
   class TdOnDeleteFailedToSendMessageCallback;
   class TdOnEditMessageCallback;
   class TdOnEditInlineMessageCallback;
   class TdOnStopPollCallback;
+  class TdOnStopBusinessPollCallback;
   class TdOnOkQueryCallback;
   class TdOnGetReplyMessageCallback;
   class TdOnGetEditedMessageCallback;
   class TdOnGetCallbackQueryMessageCallback;
   class TdOnGetStickerSetCallback;
+  class TdOnGetForumTopicInfoCallback;
   class TdOnGetMenuButtonCallback;
   class TdOnGetMyCommandsCallback;
   class TdOnGetMyDefaultAdministratorRightsCallback;
+  class TdOnGetMyNameCallback;
+  class TdOnGetMyDescriptionCallback;
+  class TdOnGetMyShortDescriptionCallback;
   class TdOnGetChatFullInfoCallback;
   class TdOnGetChatStickerSetCallback;
+  class TdOnGetChatCustomEmojiStickerSetCallback;
+  class TdOnGetChatBusinessStartPageStickerSetCallback;
   class TdOnGetChatPinnedMessageCallback;
   class TdOnGetChatPinnedMessageToUnpinCallback;
   class TdOnGetGroupMembersCallback;
   class TdOnGetSupergroupMembersCallback;
-  class TdOnGetSupergroupMembersCountCallback;
+  class TdOnGetSupergroupMemberCountCallback;
+  class TdOnGetUserChatBoostsCallback;
+  class TdOnGetGiftsCallback;
   class TdOnCreateInvoiceLinkCallback;
+  class TdOnGetStarTransactionsQueryCallback;
   class TdOnReplacePrimaryChatInviteLinkCallback;
   class TdOnGetChatInviteLinkCallback;
   class TdOnGetGameHighScoresCallback;
   class TdOnAnswerWebAppQueryCallback;
+  class TdOnSavePreparedInlineMessageCallback;
   class TdOnReturnFileCallback;
   class TdOnReturnStickerSetCallback;
   class TdOnGetStickerSetPromiseCallback;
@@ -213,9 +274,12 @@ class Client final : public WebhookActor::Callback {
   void on_get_callback_query_message(object_ptr<td_api::message> message, int64 user_id, int state);
 
   void on_get_sticker_set(int64 set_id, int64 new_callback_query_user_id, int64 new_message_chat_id,
-                          object_ptr<td_api::stickerSet> sticker_set);
+                          const td::string &new_message_business_connection_id,
+                          int64 new_business_callback_query_user_id, object_ptr<td_api::text> sticker_set_name);
 
   void on_get_sticker_set_name(int64 set_id, const td::string &name);
+
+  void on_get_sticker_set_name(int64 set_id, object_ptr<td_api::Object> sticker_set_name);
 
   class TdQueryCallback {
    public:
@@ -228,9 +292,23 @@ class Client final : public WebhookActor::Callback {
     virtual ~TdQueryCallback() = default;
   };
 
+  struct InputReplyParameters {
+    td::string reply_in_chat_id;
+    int64 reply_to_message_id = 0;
+    bool allow_sending_without_reply = false;
+    object_ptr<td_api::inputTextQuote> quote;
+  };
+
+  struct CheckedReplyParameters {
+    int64 reply_in_chat_id = 0;
+    int64 reply_to_message_id = 0;
+    object_ptr<td_api::inputTextQuote> quote;
+  };
+
   struct UserInfo;
   struct ChatInfo;
   struct BotCommandScope;
+  struct BotUserIds;
 
   enum class AccessRights { Read, ReadMembers, Edit, Write };
 
@@ -244,6 +322,12 @@ class Client final : public WebhookActor::Callback {
   class TdOnCheckChatNoFailCallback;
   template <class OnSuccess>
   class TdOnCheckMessageCallback;
+  template <class OnSuccess>
+  class TdOnCheckMessagesCallback;
+  template <class OnSuccess>
+  class TdOnCheckMessageThreadCallback;
+  template <class OnSuccess>
+  class TdOnCheckBusinessConnectionCallback;
   template <class OnSuccess>
   class TdOnCheckRemoteFileIdCallback;
   template <class OnSuccess>
@@ -268,10 +352,21 @@ class Client final : public WebhookActor::Callback {
                          OnSuccess on_success) const;
 
   template <class OnSuccess>
-  void check_chat(Slice chat_id_str, AccessRights access_rights, PromisedQueryPtr query, OnSuccess on_success);
+  void check_chat(td::Slice chat_id_str, AccessRights access_rights, PromisedQueryPtr query, OnSuccess on_success,
+                  bool allow_unknown_user = false);
 
   template <class OnSuccess>
-  void check_chat_no_fail(Slice chat_id_str, PromisedQueryPtr query, OnSuccess on_success);
+  void check_chat_no_fail(td::Slice chat_id_str, PromisedQueryPtr query, OnSuccess on_success);
+
+  static td::Result<int64> get_business_connection_chat_id(td::Slice chat_id_str);
+
+  template <class OnSuccess>
+  void check_business_connection(const td::string &business_connection_id, PromisedQueryPtr query,
+                                 OnSuccess on_success);
+
+  template <class OnSuccess>
+  void check_business_connection_chat_id(const td::string &business_connection_id, const td::string &chat_id_str,
+                                         PromisedQueryPtr query, OnSuccess on_success);
 
   template <class OnSuccess>
   void check_bot_command_scope(BotCommandScope &&scope, PromisedQueryPtr query, OnSuccess on_success);
@@ -280,8 +375,16 @@ class Client final : public WebhookActor::Callback {
   void check_remote_file_id(td::string file_id, PromisedQueryPtr query, OnSuccess on_success);
 
   template <class OnSuccess>
-  void check_message(Slice chat_id_str, int64 message_id, bool allow_empty, AccessRights access_rights,
-                     Slice message_type, PromisedQueryPtr query, OnSuccess on_success);
+  void check_message(td::Slice chat_id_str, int64 message_id, bool allow_empty, AccessRights access_rights,
+                     td::Slice message_type, PromisedQueryPtr query, OnSuccess on_success);
+
+  template <class OnSuccess>
+  void check_messages(td::Slice chat_id_str, td::vector<int64> message_ids, bool allow_empty,
+                      AccessRights access_rights, td::Slice message_type, PromisedQueryPtr query, OnSuccess on_success);
+
+  template <class OnSuccess>
+  void check_reply_parameters(td::Slice chat_id_str, InputReplyParameters &&reply_parameters, int64 message_thread_id,
+                              PromisedQueryPtr query, OnSuccess on_success, bool allow_unknown_user = false);
 
   template <class OnSuccess>
   void resolve_sticker_set(const td::string &sticker_set_name, PromisedQueryPtr query, OnSuccess on_success);
@@ -304,14 +407,9 @@ class Client final : public WebhookActor::Callback {
   void on_result(td::uint64 id, object_ptr<td_api::Object> result);
 
   void on_update_authorization_state();
-  void log_out(bool is_api_id_invalid);
-  Slice get_logging_out_error_description() const;
+  void log_out(int32 error_code, td::Slice error_message);
   void on_closed();
   void finish_closing();
-
-  static int32 get_database_scheduler_id();
-
-  static int32 get_file_gc_scheduler_id();
 
   void clear_tqueue();
 
@@ -322,13 +420,22 @@ class Client final : public WebhookActor::Callback {
 
   static bool to_bool(td::MutableSlice value);
 
+  static object_ptr<td_api::InputMessageReplyTo> get_input_message_reply_to(CheckedReplyParameters &&reply_parameters);
+
+  static object_ptr<td_api::InputMessageReplyTo> get_input_message_reply_to(InputReplyParameters &&reply_parameters);
+
+  static td::Result<InputReplyParameters> get_reply_parameters(const Query *query);
+
+  static td::Result<InputReplyParameters> get_reply_parameters(td::JsonValue &&value);
+
   static td::Result<object_ptr<td_api::keyboardButton>> get_keyboard_button(td::JsonValue &button);
 
-  td::Result<object_ptr<td_api::inlineKeyboardButton>> get_inline_keyboard_button(td::JsonValue &button);
+  static td::Result<object_ptr<td_api::inlineKeyboardButton>> get_inline_keyboard_button(td::JsonValue &button,
+                                                                                         BotUserIds &bot_user_ids);
 
-  td::Result<object_ptr<td_api::ReplyMarkup>> get_reply_markup(const Query *query);
+  static td::Result<object_ptr<td_api::ReplyMarkup>> get_reply_markup(const Query *query, BotUserIds &bot_user_ids);
 
-  td::Result<object_ptr<td_api::ReplyMarkup>> get_reply_markup(td::JsonValue &&value);
+  static td::Result<object_ptr<td_api::ReplyMarkup>> get_reply_markup(td::JsonValue &&value, BotUserIds &bot_user_ids);
 
   static td::Result<object_ptr<td_api::labeledPricePart>> get_labeled_price_part(td::JsonValue &value);
 
@@ -347,30 +454,40 @@ class Client final : public WebhookActor::Callback {
 
   static object_ptr<td_api::ChatAction> get_chat_action(const Query *query);
 
-  static td::string get_local_file_path(Slice file_uri);
+  static td::string get_local_file_path(td::Slice file_uri);
 
-  object_ptr<td_api::InputFile> get_input_file(const Query *query, Slice field_name, bool force_file = false) const;
+  object_ptr<td_api::InputFile> get_input_file(const Query *query, td::Slice field_name, bool force_file = false) const;
 
-  object_ptr<td_api::InputFile> get_input_file(const Query *query, Slice field_name, Slice file_id,
+  object_ptr<td_api::InputFile> get_input_file(const Query *query, td::Slice field_name, td::Slice file_id,
                                                bool force_file) const;
 
-  object_ptr<td_api::inputThumbnail> get_input_thumbnail(const Query *query, Slice field_name) const;
+  object_ptr<td_api::inputThumbnail> get_input_thumbnail(const Query *query) const;
 
-  td::Result<object_ptr<td_api::InputInlineQueryResult>> get_inline_query_result(const Query *query);
+  static td::Result<td_api::object_ptr<td_api::inlineQueryResultsButton>> get_inline_query_results_button(
+      td::JsonValue &&value);
 
-  td::Result<object_ptr<td_api::InputInlineQueryResult>> get_inline_query_result(td::JsonValue &&value);
+  static td::Result<td_api::object_ptr<td_api::inlineQueryResultsButton>> get_inline_query_results_button(
+      td::MutableSlice value);
 
-  td::Result<td::vector<object_ptr<td_api::InputInlineQueryResult>>> get_inline_query_results(const Query *query);
+  static td::Result<object_ptr<td_api::InputInlineQueryResult>> get_inline_query_result(const Query *query,
+                                                                                        BotUserIds &bot_user_ids);
 
-  td::Result<td::vector<object_ptr<td_api::InputInlineQueryResult>>> get_inline_query_results(td::JsonValue &&value);
+  static td::Result<object_ptr<td_api::InputInlineQueryResult>> get_inline_query_result(td::JsonValue &&value,
+                                                                                        BotUserIds &bot_user_ids);
+
+  static td::Result<td::vector<object_ptr<td_api::InputInlineQueryResult>>> get_inline_query_results(
+      const Query *query, BotUserIds &bot_user_ids);
+
+  static td::Result<td::vector<object_ptr<td_api::InputInlineQueryResult>>> get_inline_query_results(
+      td::JsonValue &&value, BotUserIds &bot_user_ids);
 
   struct BotCommandScope {
     object_ptr<td_api::BotCommandScope> scope_;
     td::string chat_id_;
-    td::int64 user_id_ = 0;
+    int64 user_id_ = 0;
 
     explicit BotCommandScope(object_ptr<td_api::BotCommandScope> scope, td::string chat_id = td::string(),
-                             td::int64 user_id = 0)
+                             int64 user_id = 0)
         : scope_(std::move(scope)), chat_id_(std::move(chat_id)), user_id_(user_id) {
     }
   };
@@ -391,7 +508,7 @@ class Client final : public WebhookActor::Callback {
 
   static td::Result<object_ptr<td_api::chatAdministratorRights>> get_chat_administrator_rights(const Query *query);
 
-  static td::Result<object_ptr<td_api::maskPosition>> get_mask_position(const Query *query, Slice field_name);
+  static td::Result<object_ptr<td_api::maskPosition>> get_mask_position(const Query *query, td::Slice field_name);
 
   static td::Result<object_ptr<td_api::maskPosition>> get_mask_position(td::JsonValue &&value);
 
@@ -399,9 +516,25 @@ class Client final : public WebhookActor::Callback {
 
   static object_ptr<td_api::MaskPoint> mask_index_to_point(int32 index);
 
+  static td::Result<td::string> get_sticker_emojis(td::JsonValue &&value);
+
+  static td::Result<td::string> get_sticker_emojis(td::MutableSlice emoji_list);
+
+  static td::Result<object_ptr<td_api::StickerFormat>> get_sticker_format(td::Slice sticker_format);
+
+  td::Result<object_ptr<td_api::inputSticker>> get_legacy_input_sticker(const Query *query) const;
+
+  td::Result<object_ptr<td_api::inputSticker>> get_input_sticker(const Query *query) const;
+
+  td::Result<object_ptr<td_api::inputSticker>> get_input_sticker(const Query *query, td::JsonValue &&value,
+                                                                 td::Slice default_sticker_format) const;
+
   td::Result<td::vector<object_ptr<td_api::inputSticker>>> get_input_stickers(const Query *query) const;
 
-  static td::Result<td::string> get_passport_element_hash(Slice encoded_hash);
+  static td::Result<object_ptr<td_api::InputFile>> get_sticker_input_file(const Query *query,
+                                                                          td::Slice field_name = "sticker");
+
+  static td::Result<td::string> get_passport_element_hash(td::Slice encoded_hash);
 
   static td::Result<object_ptr<td_api::InputPassportElementErrorSource>> get_passport_element_error_source(
       td::JsonObject &object);
@@ -411,7 +544,7 @@ class Client final : public WebhookActor::Callback {
   static td::Result<td::vector<object_ptr<td_api::inputPassportElementError>>> get_passport_element_errors(
       const Query *query);
 
-  static td::JsonValue get_input_entities(const Query *query, Slice field_name);
+  static td::JsonValue get_input_entities(const Query *query, td::Slice field_name);
 
   static td::Result<object_ptr<td_api::formattedText>> get_caption(const Query *query);
 
@@ -422,160 +555,242 @@ class Client final : public WebhookActor::Callback {
   static td::Result<object_ptr<td_api::formattedText>> get_formatted_text(td::string text, td::string parse_mode,
                                                                           td::JsonValue &&input_entities);
 
+  static object_ptr<td_api::linkPreviewOptions> get_link_preview_options(bool disable_web_page_preview);
+
+  static td::Result<object_ptr<td_api::linkPreviewOptions>> get_link_preview_options(const Query *query);
+
+  static td::Result<object_ptr<td_api::linkPreviewOptions>> get_link_preview_options(td::JsonValue &&value);
+
   static td::Result<object_ptr<td_api::inputMessageText>> get_input_message_text(const Query *query);
 
-  static td::Result<object_ptr<td_api::inputMessageText>> get_input_message_text(td::string text,
-                                                                                 bool disable_web_page_preview,
-                                                                                 td::string parse_mode,
-                                                                                 td::JsonValue &&input_entities);
+  static td::Result<object_ptr<td_api::inputMessageText>> get_input_message_text(
+      td::string text, object_ptr<td_api::linkPreviewOptions> link_preview_options, td::string parse_mode,
+      td::JsonValue &&input_entities);
 
   static td::Result<object_ptr<td_api::location>> get_location(const Query *query);
 
-  static td::Result<object_ptr<td_api::chatPermissions>> get_chat_permissions(const Query *query, bool &allow_legacy);
+  static td::Result<object_ptr<td_api::chatPermissions>> get_chat_permissions(const Query *query, bool &allow_legacy,
+                                                                              bool use_independent_chat_permissions);
 
   td::Result<object_ptr<td_api::InputMessageContent>> get_input_media(const Query *query, td::JsonValue &&input_media,
                                                                       bool for_album) const;
 
-  td::Result<object_ptr<td_api::InputMessageContent>> get_input_media(const Query *query, Slice field_name,
-                                                                      bool for_album) const;
+  td::Result<object_ptr<td_api::InputMessageContent>> get_input_media(const Query *query, td::Slice field_name) const;
 
-  td::Result<td::vector<object_ptr<td_api::InputMessageContent>>> get_input_message_contents(const Query *query,
-                                                                                             Slice field_name) const;
+  td::Result<td::vector<object_ptr<td_api::InputMessageContent>>> get_input_message_contents(
+      const Query *query, td::Slice field_name) const;
 
   td::Result<td::vector<object_ptr<td_api::InputMessageContent>>> get_input_message_contents(
       const Query *query, td::JsonValue &&value) const;
 
-  static td::Result<object_ptr<td_api::inputMessageInvoice>> get_input_message_invoice(const Query *query);
+  td::Result<object_ptr<td_api::inputPaidMedia>> get_input_paid_media(const Query *query,
+                                                                      td::JsonValue &&input_media) const;
+
+  td::Result<object_ptr<td_api::inputPaidMedia>> get_input_paid_media(const Query *query, td::Slice field_name) const;
+
+  td::Result<td::vector<object_ptr<td_api::inputPaidMedia>>> get_paid_media(const Query *query,
+                                                                            td::Slice field_name) const;
+
+  td::Result<td::vector<object_ptr<td_api::inputPaidMedia>>> get_paid_media(const Query *query,
+                                                                            td::JsonValue &&value) const;
+
+  td::Result<object_ptr<td_api::inputMessageInvoice>> get_input_message_invoice(const Query *query) const;
 
   static object_ptr<td_api::messageSendOptions> get_message_send_options(bool disable_notification,
-                                                                         bool protect_content);
+                                                                         bool protect_content,
+                                                                         bool allow_paid_broadcast, int64 effect_id);
 
-  static td::Result<td::vector<td::string>> get_poll_options(const Query *query);
+  static td::Result<td::vector<object_ptr<td_api::formattedText>>> get_poll_options(const Query *query);
 
-  static int32 get_integer_arg(const Query *query, Slice field_name, int32 default_value,
+  static td::Result<object_ptr<td_api::ReactionType>> get_reaction_type(td::JsonValue &&value);
+
+  static td::Result<td::vector<object_ptr<td_api::ReactionType>>> get_reaction_types(const Query *query);
+
+  static int32 get_integer_arg(const Query *query, td::Slice field_name, int32 default_value,
                                int32 min_value = std::numeric_limits<int32>::min(),
                                int32 max_value = std::numeric_limits<int32>::max());
 
-  static td::Result<td::MutableSlice> get_required_string_arg(const Query *query, Slice field_name);
+  static td::Result<td::MutableSlice> get_required_string_arg(const Query *query, td::Slice field_name);
 
-  static int64 get_message_id(const Query *query, Slice field_name = Slice("message_id"));
+  static int64 get_message_id(const Query *query, td::Slice field_name = td::Slice("message_id"));
 
-  static td::Result<Slice> get_inline_message_id(const Query *query, Slice field_name = Slice("inline_message_id"));
+  static td::Result<td::vector<int64>> get_message_ids(const Query *query, size_t max_count,
+                                                       td::Slice field_name = td::Slice("message_ids"));
 
-  static td::Result<int64> get_user_id(const Query *query, Slice field_name = Slice("user_id"));
+  static td::Result<td::Slice> get_inline_message_id(const Query *query,
+                                                     td::Slice field_name = td::Slice("inline_message_id"));
 
-  int64 extract_yet_unsent_message_query_id(int64 chat_id, int64 message_id, bool *is_reply_to_message_deleted);
+  static td::Result<int64> get_user_id(const Query *query, td::Slice field_name = td::Slice("user_id"));
+
+  void decrease_yet_unsent_message_count(int64 chat_id, int32 count);
+
+  int64 extract_yet_unsent_message_query_id(int64 chat_id, int64 message_id);
 
   void on_message_send_succeeded(object_ptr<td_api::message> &&message, int64 old_message_id);
-  void on_message_send_failed(int64 chat_id, int64 old_message_id, int64 new_message_id, Status result);
+
+  void on_message_send_failed(int64 chat_id, int64 old_message_id, int64 new_message_id,
+                              object_ptr<td_api::error> &&error);
 
   static bool init_methods();
 
-  void on_cmd(PromisedQueryPtr query);
+  static bool is_local_method(td::Slice method);
 
-  Status process_get_me_query(PromisedQueryPtr &query);
-  Status process_get_my_commands_query(PromisedQueryPtr &query);
-  Status process_set_my_commands_query(PromisedQueryPtr &query);
-  Status process_delete_my_commands_query(PromisedQueryPtr &query);
-  Status process_get_my_default_administrator_rights_query(PromisedQueryPtr &query);
-  Status process_set_my_default_administrator_rights_query(PromisedQueryPtr &query);
-  Status process_get_chat_menu_button_query(PromisedQueryPtr &query);
-  Status process_set_chat_menu_button_query(PromisedQueryPtr &query);
-  Status process_get_user_profile_photos_query(PromisedQueryPtr &query);
-  Status process_send_message_query(PromisedQueryPtr &query);
-  Status process_send_animation_query(PromisedQueryPtr &query);
-  Status process_send_audio_query(PromisedQueryPtr &query);
-  Status process_send_dice_query(PromisedQueryPtr &query);
-  Status process_send_document_query(PromisedQueryPtr &query);
-  Status process_send_photo_query(PromisedQueryPtr &query);
-  Status process_send_sticker_query(PromisedQueryPtr &query);
-  Status process_send_video_query(PromisedQueryPtr &query);
-  Status process_send_video_note_query(PromisedQueryPtr &query);
-  Status process_send_voice_query(PromisedQueryPtr &query);
-  Status process_send_game_query(PromisedQueryPtr &query);
-  Status process_send_invoice_query(PromisedQueryPtr &query);
-  Status process_send_location_query(PromisedQueryPtr &query);
-  Status process_send_venue_query(PromisedQueryPtr &query);
-  Status process_send_contact_query(PromisedQueryPtr &query);
-  Status process_send_poll_query(PromisedQueryPtr &query);
-  Status process_stop_poll_query(PromisedQueryPtr &query);
-  Status process_copy_message_query(PromisedQueryPtr &query);
-  Status process_forward_message_query(PromisedQueryPtr &query);
-  Status process_send_media_group_query(PromisedQueryPtr &query);
-  Status process_send_chat_action_query(PromisedQueryPtr &query);
-  Status process_edit_message_text_query(PromisedQueryPtr &query);
-  Status process_edit_message_live_location_query(PromisedQueryPtr &query);
-  Status process_edit_message_media_query(PromisedQueryPtr &query);
-  Status process_edit_message_caption_query(PromisedQueryPtr &query);
-  Status process_edit_message_reply_markup_query(PromisedQueryPtr &query);
-  Status process_delete_message_query(PromisedQueryPtr &query);
-  Status process_create_invoice_link_query(PromisedQueryPtr &query);
-  Status process_set_game_score_query(PromisedQueryPtr &query);
-  Status process_get_game_high_scores_query(PromisedQueryPtr &query);
-  Status process_answer_web_app_query_query(PromisedQueryPtr &query);
-  Status process_answer_inline_query_query(PromisedQueryPtr &query);
-  Status process_answer_callback_query_query(PromisedQueryPtr &query);
-  Status process_answer_shipping_query_query(PromisedQueryPtr &query);
-  Status process_answer_pre_checkout_query_query(PromisedQueryPtr &query);
-  Status process_export_chat_invite_link_query(PromisedQueryPtr &query);
-  Status process_create_chat_invite_link_query(PromisedQueryPtr &query);
-  Status process_edit_chat_invite_link_query(PromisedQueryPtr &query);
-  Status process_revoke_chat_invite_link_query(PromisedQueryPtr &query);
-  Status process_get_chat_query(PromisedQueryPtr &query);
-  Status process_set_chat_photo_query(PromisedQueryPtr &query);
-  Status process_delete_chat_photo_query(PromisedQueryPtr &query);
-  Status process_set_chat_title_query(PromisedQueryPtr &query);
-  Status process_set_chat_permissions_query(PromisedQueryPtr &query);
-  Status process_set_chat_description_query(PromisedQueryPtr &query);
-  Status process_pin_chat_message_query(PromisedQueryPtr &query);
-  Status process_unpin_chat_message_query(PromisedQueryPtr &query);
-  Status process_unpin_all_chat_messages_query(PromisedQueryPtr &query);
-  Status process_set_chat_sticker_set_query(PromisedQueryPtr &query);
-  Status process_delete_chat_sticker_set_query(PromisedQueryPtr &query);
-  Status process_get_chat_member_query(PromisedQueryPtr &query);
-  Status process_get_chat_administrators_query(PromisedQueryPtr &query);
-  Status process_get_chat_member_count_query(PromisedQueryPtr &query);
-  Status process_leave_chat_query(PromisedQueryPtr &query);
-  Status process_promote_chat_member_query(PromisedQueryPtr &query);
-  Status process_set_chat_administrator_custom_title_query(PromisedQueryPtr &query);
-  Status process_ban_chat_member_query(PromisedQueryPtr &query);
-  Status process_restrict_chat_member_query(PromisedQueryPtr &query);
-  Status process_unban_chat_member_query(PromisedQueryPtr &query);
-  Status process_ban_chat_sender_chat_query(PromisedQueryPtr &query);
-  Status process_unban_chat_sender_chat_query(PromisedQueryPtr &query);
-  Status process_approve_chat_join_request_query(PromisedQueryPtr &query);
-  Status process_decline_chat_join_request_query(PromisedQueryPtr &query);
-  Status process_get_sticker_set_query(PromisedQueryPtr &query);
-  Status process_get_custom_emoji_stickers_query(PromisedQueryPtr &query);
-  Status process_upload_sticker_file_query(PromisedQueryPtr &query);
-  Status process_create_new_sticker_set_query(PromisedQueryPtr &query);
-  Status process_add_sticker_to_set_query(PromisedQueryPtr &query);
-  Status process_set_sticker_set_thumb_query(PromisedQueryPtr &query);
-  Status process_set_sticker_position_in_set_query(PromisedQueryPtr &query);
-  Status process_delete_sticker_from_set_query(PromisedQueryPtr &query);
-  Status process_set_passport_data_errors_query(PromisedQueryPtr &query);
-  Status process_send_custom_request_query(PromisedQueryPtr &query);
-  Status process_answer_custom_query_query(PromisedQueryPtr &query);
-  Status process_get_updates_query(PromisedQueryPtr &query);
-  Status process_set_webhook_query(PromisedQueryPtr &query);
-  Status process_get_webhook_info_query(PromisedQueryPtr &query);
-  Status process_get_file_query(PromisedQueryPtr &query);
+  void on_cmd(PromisedQueryPtr query, bool force = false);
+
+  td::Status process_get_me_query(PromisedQueryPtr &query);
+  td::Status process_get_my_commands_query(PromisedQueryPtr &query);
+  td::Status process_set_my_commands_query(PromisedQueryPtr &query);
+  td::Status process_delete_my_commands_query(PromisedQueryPtr &query);
+  td::Status process_get_my_default_administrator_rights_query(PromisedQueryPtr &query);
+  td::Status process_set_my_default_administrator_rights_query(PromisedQueryPtr &query);
+  td::Status process_get_my_name_query(PromisedQueryPtr &query);
+  td::Status process_set_my_name_query(PromisedQueryPtr &query);
+  td::Status process_get_my_description_query(PromisedQueryPtr &query);
+  td::Status process_set_my_description_query(PromisedQueryPtr &query);
+  td::Status process_get_my_short_description_query(PromisedQueryPtr &query);
+  td::Status process_set_my_short_description_query(PromisedQueryPtr &query);
+  td::Status process_get_chat_menu_button_query(PromisedQueryPtr &query);
+  td::Status process_set_chat_menu_button_query(PromisedQueryPtr &query);
+  td::Status process_get_user_profile_photos_query(PromisedQueryPtr &query);
+  td::Status process_send_message_query(PromisedQueryPtr &query);
+  td::Status process_send_animation_query(PromisedQueryPtr &query);
+  td::Status process_send_audio_query(PromisedQueryPtr &query);
+  td::Status process_send_dice_query(PromisedQueryPtr &query);
+  td::Status process_send_document_query(PromisedQueryPtr &query);
+  td::Status process_send_photo_query(PromisedQueryPtr &query);
+  td::Status process_send_sticker_query(PromisedQueryPtr &query);
+  td::Status process_send_video_query(PromisedQueryPtr &query);
+  td::Status process_send_video_note_query(PromisedQueryPtr &query);
+  td::Status process_send_voice_query(PromisedQueryPtr &query);
+  td::Status process_send_paid_media_query(PromisedQueryPtr &query);
+  td::Status process_send_game_query(PromisedQueryPtr &query);
+  td::Status process_send_invoice_query(PromisedQueryPtr &query);
+  td::Status process_send_location_query(PromisedQueryPtr &query);
+  td::Status process_send_venue_query(PromisedQueryPtr &query);
+  td::Status process_send_contact_query(PromisedQueryPtr &query);
+  td::Status process_send_poll_query(PromisedQueryPtr &query);
+  td::Status process_stop_poll_query(PromisedQueryPtr &query);
+  td::Status process_copy_message_query(PromisedQueryPtr &query);
+  td::Status process_copy_messages_query(PromisedQueryPtr &query);
+  td::Status process_forward_message_query(PromisedQueryPtr &query);
+  td::Status process_forward_messages_query(PromisedQueryPtr &query);
+  td::Status process_send_media_group_query(PromisedQueryPtr &query);
+  td::Status process_send_chat_action_query(PromisedQueryPtr &query);
+  td::Status process_set_message_reaction_query(PromisedQueryPtr &query);
+  td::Status process_edit_message_text_query(PromisedQueryPtr &query);
+  td::Status process_edit_message_live_location_query(PromisedQueryPtr &query);
+  td::Status process_edit_message_media_query(PromisedQueryPtr &query);
+  td::Status process_edit_message_caption_query(PromisedQueryPtr &query);
+  td::Status process_edit_message_reply_markup_query(PromisedQueryPtr &query);
+  td::Status process_delete_message_query(PromisedQueryPtr &query);
+  td::Status process_delete_messages_query(PromisedQueryPtr &query);
+  td::Status process_create_invoice_link_query(PromisedQueryPtr &query);
+  td::Status process_get_star_transactions_query(PromisedQueryPtr &query);
+  td::Status process_refund_star_payment_query(PromisedQueryPtr &query);
+  td::Status process_edit_user_star_subscription_query(PromisedQueryPtr &query);
+  td::Status process_get_available_gifts_query(PromisedQueryPtr &query);
+  td::Status process_send_gift_query(PromisedQueryPtr &query);
+  td::Status process_verify_user_query(PromisedQueryPtr &query);
+  td::Status process_verify_chat_query(PromisedQueryPtr &query);
+  td::Status process_remove_user_verification_query(PromisedQueryPtr &query);
+  td::Status process_remove_chat_verification_query(PromisedQueryPtr &query);
+  td::Status process_set_game_score_query(PromisedQueryPtr &query);
+  td::Status process_get_game_high_scores_query(PromisedQueryPtr &query);
+  td::Status process_answer_web_app_query_query(PromisedQueryPtr &query);
+  td::Status process_answer_inline_query_query(PromisedQueryPtr &query);
+  td::Status process_save_prepared_inline_message_query(PromisedQueryPtr &query);
+  td::Status process_answer_callback_query_query(PromisedQueryPtr &query);
+  td::Status process_answer_shipping_query_query(PromisedQueryPtr &query);
+  td::Status process_answer_pre_checkout_query_query(PromisedQueryPtr &query);
+  td::Status process_export_chat_invite_link_query(PromisedQueryPtr &query);
+  td::Status process_create_chat_invite_link_query(PromisedQueryPtr &query);
+  td::Status process_create_chat_subscription_invite_link_query(PromisedQueryPtr &query);
+  td::Status process_edit_chat_invite_link_query(PromisedQueryPtr &query);
+  td::Status process_edit_chat_subscription_invite_link_query(PromisedQueryPtr &query);
+  td::Status process_revoke_chat_invite_link_query(PromisedQueryPtr &query);
+  td::Status process_get_business_connection_query(PromisedQueryPtr &query);
+  td::Status process_set_user_emoji_status_query(PromisedQueryPtr &query);
+  td::Status process_get_chat_query(PromisedQueryPtr &query);
+  td::Status process_set_chat_photo_query(PromisedQueryPtr &query);
+  td::Status process_delete_chat_photo_query(PromisedQueryPtr &query);
+  td::Status process_set_chat_title_query(PromisedQueryPtr &query);
+  td::Status process_set_chat_permissions_query(PromisedQueryPtr &query);
+  td::Status process_set_chat_description_query(PromisedQueryPtr &query);
+  td::Status process_pin_chat_message_query(PromisedQueryPtr &query);
+  td::Status process_unpin_chat_message_query(PromisedQueryPtr &query);
+  td::Status process_unpin_all_chat_messages_query(PromisedQueryPtr &query);
+  td::Status process_set_chat_sticker_set_query(PromisedQueryPtr &query);
+  td::Status process_delete_chat_sticker_set_query(PromisedQueryPtr &query);
+  td::Status process_get_forum_topic_icon_stickers_query(PromisedQueryPtr &query);
+  td::Status process_create_forum_topic_query(PromisedQueryPtr &query);
+  td::Status process_edit_forum_topic_query(PromisedQueryPtr &query);
+  td::Status process_close_forum_topic_query(PromisedQueryPtr &query);
+  td::Status process_reopen_forum_topic_query(PromisedQueryPtr &query);
+  td::Status process_delete_forum_topic_query(PromisedQueryPtr &query);
+  td::Status process_unpin_all_forum_topic_messages_query(PromisedQueryPtr &query);
+  td::Status process_edit_general_forum_topic_query(PromisedQueryPtr &query);
+  td::Status process_close_general_forum_topic_query(PromisedQueryPtr &query);
+  td::Status process_reopen_general_forum_topic_query(PromisedQueryPtr &query);
+  td::Status process_hide_general_forum_topic_query(PromisedQueryPtr &query);
+  td::Status process_unhide_general_forum_topic_query(PromisedQueryPtr &query);
+  td::Status process_unpin_all_general_forum_topic_messages_query(PromisedQueryPtr &query);
+  td::Status process_get_chat_member_query(PromisedQueryPtr &query);
+  td::Status process_get_chat_administrators_query(PromisedQueryPtr &query);
+  td::Status process_get_chat_member_count_query(PromisedQueryPtr &query);
+  td::Status process_leave_chat_query(PromisedQueryPtr &query);
+  td::Status process_promote_chat_member_query(PromisedQueryPtr &query);
+  td::Status process_set_chat_administrator_custom_title_query(PromisedQueryPtr &query);
+  td::Status process_ban_chat_member_query(PromisedQueryPtr &query);
+  td::Status process_restrict_chat_member_query(PromisedQueryPtr &query);
+  td::Status process_unban_chat_member_query(PromisedQueryPtr &query);
+  td::Status process_ban_chat_sender_chat_query(PromisedQueryPtr &query);
+  td::Status process_unban_chat_sender_chat_query(PromisedQueryPtr &query);
+  td::Status process_approve_chat_join_request_query(PromisedQueryPtr &query);
+  td::Status process_decline_chat_join_request_query(PromisedQueryPtr &query);
+  td::Status process_get_user_chat_boosts_query(PromisedQueryPtr &query);
+  td::Status process_get_sticker_set_query(PromisedQueryPtr &query);
+  td::Status process_get_custom_emoji_stickers_query(PromisedQueryPtr &query);
+  td::Status process_upload_sticker_file_query(PromisedQueryPtr &query);
+  td::Status process_create_new_sticker_set_query(PromisedQueryPtr &query);
+  td::Status process_add_sticker_to_set_query(PromisedQueryPtr &query);
+  td::Status process_replace_sticker_in_set_query(PromisedQueryPtr &query);
+  td::Status process_set_sticker_set_title_query(PromisedQueryPtr &query);
+  td::Status process_set_sticker_set_thumbnail_query(PromisedQueryPtr &query);
+  td::Status process_set_custom_emoji_sticker_set_thumbnail_query(PromisedQueryPtr &query);
+  td::Status process_delete_sticker_set_query(PromisedQueryPtr &query);
+  td::Status process_set_sticker_position_in_set_query(PromisedQueryPtr &query);
+  td::Status process_delete_sticker_from_set_query(PromisedQueryPtr &query);
+  td::Status process_set_sticker_emoji_list_query(PromisedQueryPtr &query);
+  td::Status process_set_sticker_keywords_query(PromisedQueryPtr &query);
+  td::Status process_set_sticker_mask_position_query(PromisedQueryPtr &query);
+  td::Status process_set_passport_data_errors_query(PromisedQueryPtr &query);
+  td::Status process_send_custom_request_query(PromisedQueryPtr &query);
+  td::Status process_answer_custom_query_query(PromisedQueryPtr &query);
+  td::Status process_get_updates_query(PromisedQueryPtr &query);
+  td::Status process_set_webhook_query(PromisedQueryPtr &query);
+  td::Status process_get_webhook_info_query(PromisedQueryPtr &query);
+  td::Status process_get_file_query(PromisedQueryPtr &query);
 
   void webhook_verified(td::string cached_ip_address) final;
   void webhook_success() final;
-  void webhook_error(Status status) final;
-  void webhook_closed(Status status) final;
+  void webhook_error(td::Status status) final;
+  void webhook_closed(td::Status status) final;
   void hangup_shared() final;
   const td::HttpFile *get_webhook_certificate(const Query *query) const;
   int32 get_webhook_max_connections(const Query *query) const;
   static bool get_webhook_fix_ip_address(const Query *query);
   void do_set_webhook(PromisedQueryPtr query, bool was_deleted);
+  void on_webhook_certificate_copied(td::Status status);
+  void finish_set_webhook(PromisedQueryPtr query);
   void save_webhook() const;
   td::string get_webhook_certificate_path() const;
 
-  void on_webhook_closed(Status status);
+  void on_webhook_closed(td::Status status);
 
-  void do_send_message(object_ptr<td_api::InputMessageContent> input_message_content, PromisedQueryPtr query);
+  void delete_last_send_message_time(td::int64 file_size, double max_delay);
+
+  void do_send_message(object_ptr<td_api::InputMessageContent> input_message_content, PromisedQueryPtr query,
+                       bool force = false);
 
   int64 get_send_message_query_id(PromisedQueryPtr query, bool is_multisend);
 
@@ -596,13 +811,28 @@ class Client final : public WebhookActor::Callback {
 
   void abort_long_poll(bool from_set_webhook);
 
-  void fail_query_conflict(Slice message, PromisedQueryPtr &&query);
+  void fail_query_closing(PromisedQueryPtr &&query);
 
-  static void fail_query_with_error(PromisedQueryPtr query, int32 error_code, Slice error_message,
-                                    Slice default_message = Slice());
+  void fail_query_flood_limit_exceeded(PromisedQueryPtr &&query);
+
+  void fail_query_conflict(td::Slice message, PromisedQueryPtr &&query);
+
+  struct ClosingError {
+    int code;
+    int retry_after;
+    td::Slice message;
+  };
+  ClosingError get_closing_error();
+
+  static int get_retry_after_time(td::Slice error_message);
+
+  static void fail_query_with_error(PromisedQueryPtr query, int32 error_code, td::Slice error_message,
+                                    td::Slice default_message = td::Slice());
 
   static void fail_query_with_error(PromisedQueryPtr &&query, object_ptr<td_api::error> error,
-                                    Slice default_message = Slice());
+                                    td::Slice default_message = td::Slice());
+
+  static bool is_special_error_code(int32 error_code);
 
   class JsonUpdates;
   void do_get_updates(int32 offset, int32 limit, int32 timeout, PromisedQueryPtr query);
@@ -623,26 +853,28 @@ class Client final : public WebhookActor::Callback {
 
     td::string first_name;
     td::string last_name;
-    td::string username;
+    td::vector<td::string> active_usernames;
+    td::string editable_username;
     td::string language_code;
 
     object_ptr<td_api::chatPhoto> photo;
     td::string bio;
+    object_ptr<td_api::birthdate> birthdate;
+    object_ptr<td_api::businessInfo> business_info;
+    int64 personal_chat_id = 0;
 
     bool have_access = false;
     bool can_join_groups = false;
     bool can_read_all_group_messages = false;
-    bool is_inline_bot = false;
+    bool can_connect_to_business = false;
+    bool has_main_web_app = false;
     bool has_private_forwards = false;
     bool has_restricted_voice_and_video_messages = false;
+    bool is_inline_bot = false;
     bool is_premium = false;
     bool added_to_attachment_menu = false;
   };
   static void add_user(UserInfo *user_info, object_ptr<td_api::user> &&user);
-  void set_user_photo(int64 user_id, object_ptr<td_api::chatPhoto> &&photo);
-  void set_user_bio(int64 user_id, td::string &&bio);
-  void set_user_has_private_forwards(int64 user_id, bool has_private_forwards);
-  void set_user_has_restricted_voice_and_video_messages(int64 user_id, bool has_restricted_voice_and_video_messages);
   UserInfo *add_user_info(int64 user_id);
   const UserInfo *get_user_info(int64 user_id) const;
 
@@ -657,38 +889,35 @@ class Client final : public WebhookActor::Callback {
     int64 upgraded_to_supergroup_id = 0;
   };
   static void add_group(GroupInfo *group_info, object_ptr<td_api::basicGroup> &&group);
-  void set_group_photo(int64 group_id, object_ptr<td_api::chatPhoto> &&photo);
-  void set_group_description(int64 group_id, td::string &&descripton);
-  void set_group_invite_link(int64 group_id, td::string &&invite_link);
   GroupInfo *add_group_info(int64 group_id);
   const GroupInfo *get_group_info(int64 group_id) const;
 
   struct SupergroupInfo {
-    td::string username;
+    td::vector<td::string> active_usernames;
+    td::string editable_username;
     object_ptr<td_api::chatPhoto> photo;
     td::string description;
     td::string invite_link;
     int64 sticker_set_id = 0;
+    int64 custom_emoji_sticker_set_id = 0;
     int32 date = 0;
     int32 slow_mode_delay = 0;
+    int32 unrestrict_boost_count = 0;
     int64 linked_chat_id = 0;
     object_ptr<td_api::chatLocation> location;
     object_ptr<td_api::ChatMemberStatus> status;
     bool is_supergroup = false;
+    bool is_forum = false;
     bool can_set_sticker_set = false;
+    bool is_all_history_available = false;
     bool has_location = false;
     bool join_to_send_messages = false;
     bool join_by_request = false;
+    bool has_hidden_members = false;
+    bool has_aggressive_anti_spam_enabled = false;
+    bool has_paid_media_allowed = false;
   };
   static void add_supergroup(SupergroupInfo *supergroup_info, object_ptr<td_api::supergroup> &&supergroup);
-  void set_supergroup_photo(int64 supergroup_id, object_ptr<td_api::chatPhoto> &&photo);
-  void set_supergroup_description(int64 supergroup_id, td::string &&descripton);
-  void set_supergroup_invite_link(int64 supergroup_id, td::string &&invite_link);
-  void set_supergroup_sticker_set_id(int64 supergroup_id, int64 sticker_set_id);
-  void set_supergroup_can_set_sticker_set(int64 supergroup_id, bool can_set_sticker_set);
-  void set_supergroup_slow_mode_delay(int64 supergroup_id, int32 slow_mode_delay);
-  void set_supergroup_linked_chat_id(int64 supergroup_id, int64 linked_chat_id);
-  void set_supergroup_location(int64 supergroup_id, object_ptr<td_api::chatLocation> location);
   SupergroupInfo *add_supergroup_info(int64 supergroup_id);
   const SupergroupInfo *get_supergroup_info(int64 supergroup_id) const;
 
@@ -697,7 +926,15 @@ class Client final : public WebhookActor::Callback {
     Type type = Type::Unknown;
     td::string title;
     int32 message_auto_delete_time = 0;
+    int64 emoji_status_custom_emoji_id = 0;
+    int32 emoji_status_expiration_date = 0;
+    int32 accent_color_id = -1;
+    int32 profile_accent_color_id = -1;
+    int64 background_custom_emoji_id = 0;
+    int64 profile_background_custom_emoji_id = 0;
     bool has_protected_content = false;
+    int32 max_reaction_count = 0;
+    object_ptr<td_api::chatAvailableReactionsSome> available_reactions;
     object_ptr<td_api::chatPhotoInfo> photo_info;
     object_ptr<td_api::chatPermissions> permissions;
     union {
@@ -708,6 +945,9 @@ class Client final : public WebhookActor::Callback {
   };
   ChatInfo *add_chat(int64 chat_id);
   const ChatInfo *get_chat(int64 chat_id) const;
+
+  void set_chat_available_reactions(ChatInfo *chat_info,
+                                    object_ptr<td_api::ChatAvailableReactions> &&available_reactions);
 
   enum class ChatType { Private, Group, Supergroup, Channel, Unknown };
 
@@ -720,35 +960,59 @@ class Client final : public WebhookActor::Callback {
     int64 sender_user_id = 0;
     int64 sender_chat_id = 0;
     int64 chat_id = 0;
+    int64 message_thread_id = 0;
     int32 date = 0;
     int32 edit_date = 0;
-    int64 initial_chat_id = 0;
-    int64 initial_sender_user_id = 0;
-    int64 initial_sender_chat_id = 0;
     int32 initial_send_date = 0;
-    int64 initial_message_id = 0;
-    td::string initial_author_signature;
-    td::string initial_sender_name;
+    int32 sender_boost_count = 0;
+    object_ptr<td_api::MessageOrigin> forward_origin;
     td::string author_signature;
-    int64 reply_to_message_id = 0;
+    td::unique_ptr<MessageInfo> business_reply_to_message;
+    object_ptr<td_api::messageReplyToMessage> reply_to_message;
+    object_ptr<td_api::messageReplyToStory> reply_to_story;
     int64 media_album_id = 0;
     int64 via_bot_user_id = 0;
     object_ptr<td_api::MessageContent> content;
     object_ptr<td_api::ReplyMarkup> reply_markup;
+    td::string business_connection_id;
+    int64 sender_business_bot_user_id = 0;
+    int64 effect_id = 0;
 
     bool can_be_saved = false;
     bool is_automatic_forward = false;
-    mutable bool is_reply_to_message_deleted = false;
+    bool is_topic_message = false;
+    bool is_from_offline = false;
+    bool is_scheduled = false;
     mutable bool is_content_changed = false;
   };
 
-  static int64 &get_reply_to_message_id(object_ptr<td_api::message> &message);
+  struct BusinessConnection {
+    td::string id_;
+    int64 user_id_ = 0;
+    int64 user_chat_id_ = 0;
+    int32 date_ = 0;
+    bool can_reply_ = false;
+    bool is_enabled_ = false;
+  };
+  const BusinessConnection *add_business_connection(object_ptr<td_api::businessConnection> &&business_connection,
+                                                    bool from_update);
+  const BusinessConnection *get_business_connection(const td::string &connection_id) const;
 
-  void set_message_reply_to_message_id(MessageInfo *message_info, int64 reply_to_message_id);
+  static int64 get_same_chat_reply_to_message_id(const td_api::messageReplyToMessage *reply_to,
+                                                 int64 message_thread_id);
 
-  static Slice get_sticker_type(const object_ptr<td_api::StickerType> &type);
+  static int64 get_same_chat_reply_to_message_id(const object_ptr<td_api::MessageReplyTo> &reply_to,
+                                                 int64 message_thread_id);
 
-  static td::Result<object_ptr<td_api::StickerType>> get_sticker_type(Slice type);
+  static int64 get_same_chat_reply_to_message_id(const object_ptr<td_api::message> &message);
+
+  static int64 get_same_chat_reply_to_message_id(const MessageInfo *message_info);
+
+  static void drop_internal_reply_to_message_in_another_chat(object_ptr<td_api::message> &message);
+
+  static td::Slice get_sticker_type(const object_ptr<td_api::StickerType> &type);
+
+  static td::Result<object_ptr<td_api::StickerType>> get_sticker_type(td::Slice type);
 
   static td::CSlice get_callback_data(const object_ptr<td_api::InlineKeyboardButtonType> &type);
 
@@ -758,13 +1022,13 @@ class Client final : public WebhookActor::Callback {
   static bool are_equal_inline_keyboards(const td_api::replyMarkupInlineKeyboard *lhs,
                                          const td_api::replyMarkupInlineKeyboard *rhs);
 
-  void set_message_reply_markup(MessageInfo *message_info, object_ptr<td_api::ReplyMarkup> &&reply_markup);
+  static void set_message_reply_markup(MessageInfo *message_info, object_ptr<td_api::ReplyMarkup> &&reply_markup);
 
   static int64 get_sticker_set_id(const object_ptr<td_api::MessageContent> &content);
 
   bool have_sticker_set_name(int64 sticker_set_id) const;
 
-  Slice get_sticker_set_name(int64 sticker_set_id) const;
+  td::string get_sticker_set_name(int64 sticker_set_id) const;
 
   int64 choose_added_member_id(const td_api::messageChatAddMembers *message_add_members) const;
 
@@ -782,11 +1046,17 @@ class Client final : public WebhookActor::Callback {
 
   static void json_store_permissions(td::JsonObjectScope &object, const td_api::chatPermissions *permissions);
 
-  void remove_replies_to_message(int64 chat_id, int64 reply_to_message_id, bool only_from_cache);
-  void delete_message(int64 chat_id, int64 message_id, bool only_from_cache);
+  td::unique_ptr<MessageInfo> delete_message(int64 chat_id, int64 message_id, bool only_from_cache);
 
   void add_new_message(object_ptr<td_api::message> &&message, bool is_edited);
-  void process_new_message_queue(int64 chat_id);
+
+  void process_new_message_queue(int64 chat_id, int state);
+
+  void add_new_business_message(object_ptr<td_api::updateNewBusinessMessage> &&update);
+
+  void add_business_message_edited(object_ptr<td_api::updateBusinessMessageEdited> &&update);
+
+  void process_new_business_message_queue(const td::string &connection_id);
 
   struct FullMessageId {
     int64 chat_id;
@@ -803,15 +1073,18 @@ class Client final : public WebhookActor::Callback {
   };
 
   struct FullMessageIdHash {
-    std::size_t operator()(FullMessageId full_message_id) const {
-      return std::hash<td::int64>()(full_message_id.chat_id) * 2023654985u +
-             std::hash<td::int64>()(full_message_id.message_id);
+    td::uint32 operator()(FullMessageId full_message_id) const {
+      return td::Hash<int64>()(full_message_id.chat_id) * 2023654985u + td::Hash<int64>()(full_message_id.message_id);
     }
   };
 
   FullMessageId add_message(object_ptr<td_api::message> &&message, bool force_update_content = false);
-  const MessageInfo *get_message(int64 chat_id, int64 message_id) const;
+  void init_message(MessageInfo *message_info, object_ptr<td_api::message> &&message, bool force_update_content);
+  const MessageInfo *get_message(int64 chat_id, int64 message_id, bool force_cache) const;
   MessageInfo *get_message_editable(int64 chat_id, int64 message_id);
+
+  td::unique_ptr<MessageInfo> create_business_message(td::string business_connection_id,
+                                                      object_ptr<td_api::businessMessage> &&message);
 
   void update_message_content(int64 chat_id, int64 message_id, object_ptr<td_api::MessageContent> &&content);
 
@@ -823,6 +1096,8 @@ class Client final : public WebhookActor::Callback {
   static int64 as_tdlib_message_id(int32 message_id);
 
   static int32 as_client_message_id(int64 message_id);
+
+  static int32 as_client_message_id_unchecked(int64 message_id);
 
   static int64 get_supergroup_chat_id(int64 supergroup_id);
 
@@ -840,13 +1115,20 @@ class Client final : public WebhookActor::Callback {
                                     const td::string &inline_message_id);
 
   void add_new_callback_query(object_ptr<td_api::updateNewCallbackQuery> &&query);
+
   void process_new_callback_query_queue(int64 user_id, int state);
+
+  void add_new_business_callback_query(object_ptr<td_api::updateNewBusinessCallbackQuery> &&query);
+
+  void process_new_business_callback_query_queue(int64 user_id);
 
   void add_new_inline_callback_query(object_ptr<td_api::updateNewInlineCallbackQuery> &&query);
 
   void add_new_shipping_query(object_ptr<td_api::updateNewShippingQuery> &&query);
 
   void add_new_pre_checkout_query(object_ptr<td_api::updateNewPreCheckoutQuery> &&query);
+
+  void add_update_purchased_paid_media(object_ptr<td_api::updatePaidMediaPurchased> &&query);
 
   void add_new_custom_event(object_ptr<td_api::updateNewCustomEvent> &&event);
 
@@ -855,6 +1137,16 @@ class Client final : public WebhookActor::Callback {
   void add_update_chat_member(object_ptr<td_api::updateChatMember> &&update);
 
   void add_update_chat_join_request(object_ptr<td_api::updateNewChatJoinRequest> &&update);
+
+  void add_update_chat_boost(object_ptr<td_api::updateChatBoost> &&update);
+
+  void add_update_message_reaction(object_ptr<td_api::updateMessageReaction> &&update);
+
+  void add_update_message_reaction_count(object_ptr<td_api::updateMessageReactions> &&update);
+
+  void add_update_business_connection(object_ptr<td_api::updateBusinessConnection> &&update);
+
+  void add_update_business_messages_deleted(object_ptr<td_api::updateBusinessMessagesDeleted> &&update);
 
   // append only before Size
   enum class UpdateType : int32 {
@@ -874,10 +1166,19 @@ class Client final : public WebhookActor::Callback {
     MyChatMember,
     ChatMember,
     ChatJoinRequest,
+    ChatBoostUpdated,
+    ChatBoostRemoved,
+    MessageReaction,
+    MessageReactionCount,
+    BusinessConnection,
+    BusinessMessage,
+    EditedBusinessMessage,
+    BusinessMessagesDeleted,
+    PurchasedPaidMedia,
     Size
   };
 
-  static Slice get_update_type_name(UpdateType update_type);
+  static td::Slice get_update_type_name(UpdateType update_type);
 
   static td::uint32 get_allowed_update_types(td::MutableSlice allowed_updates, bool is_internal);
 
@@ -899,13 +1200,15 @@ class Client final : public WebhookActor::Callback {
 
   static td::string get_passport_element_type(int32 id);
 
-  static object_ptr<td_api::PassportElementType> get_passport_element_type(Slice type);
+  static object_ptr<td_api::PassportElementType> get_passport_element_type(td::Slice type);
 
   bool have_message_access(int64 chat_id) const;
 
-  // by default ChatMember updates are disabled
+  // by default ChatMember, MessageReaction, and MessageReactionCount updates are disabled
   static constexpr td::uint32 DEFAULT_ALLOWED_UPDATE_TYPES =
-      (1 << static_cast<int32>(UpdateType::Size)) - 1 - (1 << static_cast<int32>(UpdateType::ChatMember));
+      (1 << static_cast<int32>(UpdateType::Size)) - 1 - (1 << static_cast<int32>(UpdateType::ChatMember)) -
+      (1 << static_cast<int32>(UpdateType::MessageReaction)) -
+      (1 << static_cast<int32>(UpdateType::MessageReactionCount));
 
   object_ptr<td_api::AuthorizationState> authorization_state_;
   bool was_authorized_ = false;
@@ -925,30 +1228,28 @@ class Client final : public WebhookActor::Callback {
 
   int64 my_id_ = -1;
   int32 authorization_date_ = -1;
+  double next_authorization_time_ = 0;
+
+  int32 prev_retry_after = 0;
+  td::string retry_after_error_message;
 
   int64 group_anonymous_bot_user_id_ = 0;
   int64 channel_bot_user_id_ = 0;
   int64 service_notifications_user_id_ = 0;
 
-  static td::FlatHashMap<td::string, Status (Client::*)(PromisedQueryPtr &query)> methods_;
+  static td::FlatHashMap<td::string, td::Status (Client::*)(PromisedQueryPtr &query)> methods_;
 
-  td::FlatHashMap<FullMessageId, td::unique_ptr<MessageInfo>, FullMessageIdHash> messages_;  // message cache
-  td::FlatHashMap<int64, td::unique_ptr<UserInfo>> users_;                                   // user info cache
-  td::FlatHashMap<int64, td::unique_ptr<GroupInfo>> groups_;                                 // group info cache
-  td::FlatHashMap<int64, td::unique_ptr<SupergroupInfo>> supergroups_;                       // supergroup info cache
-  td::FlatHashMap<int64, td::unique_ptr<ChatInfo>> chats_;                                   // chat info cache
-
-  td::FlatHashMap<FullMessageId, td::FlatHashSet<int64>, FullMessageIdHash>
-      reply_message_ids_;  // message -> replies to it
-  td::FlatHashMap<FullMessageId, td::FlatHashSet<int64>, FullMessageIdHash>
-      yet_unsent_reply_message_ids_;  // message -> replies to it
+  td::WaitFreeHashMap<FullMessageId, td::unique_ptr<MessageInfo>, FullMessageIdHash> messages_;
+  td::WaitFreeHashMap<int64, td::unique_ptr<UserInfo>> users_;
+  td::WaitFreeHashMap<int64, td::unique_ptr<GroupInfo>> groups_;
+  td::WaitFreeHashMap<int64, td::unique_ptr<SupergroupInfo>> supergroups_;
+  td::WaitFreeHashMap<int64, td::unique_ptr<ChatInfo>> chats_;
+  td::WaitFreeHashMap<td::string, td::unique_ptr<BusinessConnection>> business_connections_;
 
   td::FlatHashMap<int32, td::vector<PromisedQueryPtr>> file_download_listeners_;
   td::FlatHashSet<int32> download_started_file_ids_;
 
   struct YetUnsentMessage {
-    int64 reply_to_message_id = 0;
-    bool is_reply_to_message_deleted = false;
     int64 send_message_query_id = 0;
   };
   td::FlatHashMap<FullMessageId, YetUnsentMessage, FullMessageIdHash> yet_unsent_messages_;
@@ -981,19 +1282,43 @@ class Client final : public WebhookActor::Callback {
   };
   td::FlatHashMap<int64, NewMessageQueue> new_message_queues_;  // chat_id -> queue
 
+  struct NewBusinessMessage {
+    object_ptr<td_api::businessMessage> message_;
+    bool is_edited_ = false;
+
+    NewBusinessMessage(object_ptr<td_api::businessMessage> &&message, bool is_edited)
+        : message_(std::move(message)), is_edited_(is_edited) {
+    }
+  };
+  struct NewBusinessMessageQueue {
+    std::queue<NewBusinessMessage> queue_;
+    bool has_active_request_ = false;
+  };
+  td::FlatHashMap<td::string, NewBusinessMessageQueue> new_business_message_queues_;  // connection_id -> queue
+
   struct NewCallbackQueryQueue {
     std::queue<object_ptr<td_api::updateNewCallbackQuery>> queue_;
     bool has_active_request_ = false;
   };
   td::FlatHashMap<int64, NewCallbackQueryQueue> new_callback_query_queues_;  // sender_user_id -> queue
 
-  td::FlatHashMap<int64, td::string> sticker_set_names_;
+  struct NewBusinessCallbackQueryQueue {
+    std::queue<object_ptr<td_api::updateNewBusinessCallbackQuery>> queue_;
+    bool has_active_request_ = false;
+  };
+  td::FlatHashMap<int64, NewBusinessCallbackQueryQueue> new_business_callback_query_queues_;  // sender_user_id -> queue
 
-  int64 cur_temp_bot_user_id_ = 1;
-  td::FlatHashMap<td::string, int64> bot_user_ids_;
-  td::FlatHashSet<td::string> unresolved_bot_usernames_;
-  td::FlatHashMap<int64, int64> temp_to_real_bot_user_id_;
-  td::FlatHashMap<td::string, td::vector<int64>> awaiting_bot_resolve_queries_;
+  td::WaitFreeHashMap<int64, td::string> sticker_set_names_;
+
+  td::WaitFreeHashMap<int64, double> last_send_message_time_;
+
+  struct BotUserIds {
+    int64 default_bot_user_id_ = 0;
+    int64 cur_temp_bot_user_id_ = 1;
+    td::FlatHashMap<td::string, int64> bot_user_ids_;
+    td::FlatHashSet<td::string> unresolved_bot_usernames_;
+  };
+  BotUserIds bot_user_ids_;
 
   struct PendingBotResolveQuery {
     std::size_t pending_resolve_count = 0;
@@ -1002,6 +1327,9 @@ class Client final : public WebhookActor::Callback {
   };
   td::FlatHashMap<int64, PendingBotResolveQuery> pending_bot_resolve_queries_;
   int64 current_bot_resolve_query_id_ = 1;
+
+  td::FlatHashMap<td::string, td::vector<int64>> awaiting_bot_resolve_queries_;
+  td::FlatHashMap<int64, int64> temp_to_real_bot_user_id_;
 
   td::string dir_;
   td::ActorOwn<td::ClientActor> td_client_;
@@ -1031,6 +1359,7 @@ class Client final : public WebhookActor::Callback {
   WebhookQueryType webhook_query_type_ = WebhookQueryType::Cancel;
   td::ActorOwn<WebhookActor> webhook_id_;
   PromisedQueryPtr webhook_set_query_;
+  PromisedQueryPtr active_webhook_set_query_;
   td::string webhook_url_;
   double webhook_set_time_ = 0;
   int32 webhook_max_connections_ = 0;
@@ -1038,7 +1367,7 @@ class Client final : public WebhookActor::Callback {
   bool webhook_fix_ip_address_ = false;
   td::string webhook_secret_token_;
   int32 last_webhook_error_date_ = 0;
-  Status last_webhook_error_;
+  td::Status last_webhook_error_;
   double next_allowed_set_webhook_time_ = 0;
   double next_set_webhook_logging_time_ = 0;
   double next_webhook_is_not_modified_warning_time_ = 0;
@@ -1055,7 +1384,19 @@ class Client final : public WebhookActor::Callback {
   double previous_get_updates_finish_time_ = 0;
   double next_get_updates_conflict_time_ = 0;
 
+  int32 log_in_date_ = 0;
+
+  int32 flood_limited_query_count_ = 0;
+  double next_flood_limit_warning_time_ = 0;
+
   td::uint64 webhook_generation_ = 1;
+
+  UpdateType delayed_update_type_ = UpdateType::Size;
+  int64 delayed_chat_id_ = 0;
+  int32 delayed_min_date_ = 0;
+  int32 delayed_max_date_ = 0;
+  int32 delayed_max_time_ = 0;
+  size_t delayed_update_count_ = 0;
 
   std::shared_ptr<const ClientParameters> parameters_;
 

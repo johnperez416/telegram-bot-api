@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -23,6 +23,7 @@
 #include "td/utils/StringBuilder.h"
 
 #include <algorithm>
+#include <atomic>
 #include <memory>
 #include <utility>
 
@@ -37,41 +38,49 @@ class Query final : public td::ListNode {
   td::Slice token() const {
     return token_;
   }
+
   bool is_test_dc() const {
     return is_test_dc_;
   }
+
   td::Slice method() const {
     return method_;
   }
+
   bool has_arg(td::Slice key) const {
     auto it = std::find_if(args_.begin(), args_.end(),
                            [&key](const std::pair<td::MutableSlice, td::MutableSlice> &s) { return s.first == key; });
     return it != args_.end();
   }
+
   td::MutableSlice arg(td::Slice key) const {
     auto it = std::find_if(args_.begin(), args_.end(),
                            [&key](const std::pair<td::MutableSlice, td::MutableSlice> &s) { return s.first == key; });
     return it == args_.end() ? td::MutableSlice() : it->second;
   }
+
   const td::vector<std::pair<td::MutableSlice, td::MutableSlice>> &args() const {
     return args_;
   }
+
   td::Slice get_header(td::Slice key) const {
     auto it = std::find_if(headers_.begin(), headers_.end(),
                            [&key](const std::pair<td::MutableSlice, td::MutableSlice> &s) { return s.first == key; });
     return it == headers_.end() ? td::Slice() : it->second;
   }
+
   const td::HttpFile *file(td::Slice key) const {
     auto it = std::find_if(files_.begin(), files_.end(), [&key](const td::HttpFile &f) { return f.field_name == key; });
     return it == files_.end() ? nullptr : &*it;
   }
+
   const td::vector<td::HttpFile> &files() const {
     return files_;
   }
 
-  const td::IPAddress &peer_address() const {
-    return peer_address_;
-  }
+  td::int64 files_size() const;
+
+  td::string get_peer_ip_address() const;
 
   td::BufferSlice &answer() {
     return answer_;
@@ -102,17 +111,19 @@ class Query final : public td::ListNode {
   Query(td::vector<td::BufferSlice> &&container, td::Slice token, bool is_test_dc, td::MutableSlice method,
         td::vector<std::pair<td::MutableSlice, td::MutableSlice>> &&args,
         td::vector<std::pair<td::MutableSlice, td::MutableSlice>> &&headers, td::vector<td::HttpFile> &&files,
-        std::shared_ptr<SharedData> shared_data, const td::IPAddress &peer_address, bool is_internal);
+        std::shared_ptr<SharedData> shared_data, const td::IPAddress &peer_ip_address, bool is_internal);
   Query(const Query &) = delete;
   Query &operator=(const Query &) = delete;
   Query(Query &&) = delete;
   Query &operator=(Query &&) = delete;
   ~Query() {
     if (shared_data_) {
-      shared_data_->query_count_--;
+      shared_data_->query_count_.fetch_sub(1, std::memory_order_relaxed);
       if (!empty()) {
-        shared_data_->query_list_size_--;
+        shared_data_->query_list_size_.fetch_sub(1, std::memory_order_relaxed);
       }
+      td::Scheduler::instance()->destroy_on_scheduler(SharedData::get_file_gc_scheduler_id(), container_, args_,
+                                                      headers_, files_, answer_);
     }
   }
 
@@ -126,7 +137,7 @@ class Query final : public td::ListNode {
   State state_;
   std::shared_ptr<SharedData> shared_data_;
   double start_timestamp_;
-  td::IPAddress peer_address_;
+  td::IPAddress peer_ip_address_;
   td::ActorId<BotStatActor> stat_actor_;
 
   // request
@@ -150,8 +161,6 @@ class Query final : public td::ListNode {
   }
 
   td::int64 query_size() const;
-
-  td::int64 files_size() const;
 
   td::int64 files_max_size() const;
 
